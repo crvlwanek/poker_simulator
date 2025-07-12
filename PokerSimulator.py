@@ -1,17 +1,13 @@
 from collections import defaultdict
+from functools import lru_cache
 import time
-from typing import Self, Union
+from typing import Union
 from enum import Enum
 from dataclasses import dataclass, field
-import random
 import itertools
-import sqlite3
 
-
-BLACK_SPADE_UNICODE = "\u2660"
-BLACK_HEART_UNICODE = "\u2665"
-BLACK_DIAMOND_UNICODE = "\u2666"
-BLACK_CLUB_UNICODE = "\u2663"
+from PokerRepository import PokerRepository
+from DeckOfCards import DeckOfCards, PlayingCard, Rank
 
 HEX_DIGIT_BITS = 4
 
@@ -21,81 +17,6 @@ SECOND_KICKER_HEX = 3
 THIRD_KICKER_HEX = 2
 FOURTH_KICKER_HEX = 1
 FIFTH_KICKER_HEX = 0
-
-
-class Suit(Enum):
-    SPADE = 0
-    HEART = 1
-    DIAMOND = 2
-    CLUB = 3
-
-    @staticmethod
-    def to_unicode(suit: Enum) -> str:
-        match (suit):
-            case Suit.SPADE:
-                return BLACK_SPADE_UNICODE
-            case Suit.HEART:
-                return BLACK_HEART_UNICODE
-            case Suit.DIAMOND:
-                return BLACK_DIAMOND_UNICODE
-            case Suit.CLUB:
-                return BLACK_CLUB_UNICODE
-        
-        raise TypeError("Unknown suit: " + suit)
-
-
-class Rank(Enum):
-    TWO = 2
-    THREE = 3
-    FOUR = 4
-    FIVE = 5
-    SIX = 6
-    SEVEN = 7
-    EIGHT = 8
-    NINE = 9
-    TEN = 10
-    JACK = 11
-    QUEEN = 12
-    KING = 13
-    ACE = 14
-
-    __mappings = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
-    assert len(__mappings) == 13, "Incorrect mappings"
-
-    @staticmethod
-    def to_string(rank: Enum) -> str:
-        return Rank.__mappings[rank.value - 2]
-    
-
-@dataclass(frozen=True)
-class PlayingCard:
-    rank: Rank
-    suit: Suit
-
-    def __repr__(self):
-        return f"{Rank.to_string(self.rank)}{Suit.to_unicode(self.suit)}"
-    
-
-STARTING_DECK = frozenset(PlayingCard(rank, suit) for rank in Rank for suit in Suit)
-assert len(STARTING_DECK) == 52, "Incorrect starting deck"
-
-
-@dataclass
-class DeckOfCards:
-    cards: list[PlayingCard]
-
-    def __init__(self):
-        self.cards = list(STARTING_DECK)
-    
-    def shuffle(self) -> Self:
-        random.shuffle(self.cards)
-        return self
-
-    def draw(self) -> PlayingCard:
-        if len(self.cards) == 0:
-            raise ValueError("Can't draw from an empty deck")
-        
-        return self.cards.pop()
     
 
 class HandRank(Enum):
@@ -114,37 +35,39 @@ class HandRank(Enum):
 Player = list[PlayingCard]
 Cards = list[PlayingCard]
 
+@lru_cache
+def get_card_hash(card: PlayingCard) -> int:
+    return 1 << (card.suit.value * 12 + card.rank.value - 2)
+
 @dataclass
 class PokerEvaluator:
+    repository: PokerRepository
 
     def hash_hand(self, cards: list[PlayingCard]) -> int:
         card_hash = 0
         for card in cards:
-            card_hash |= self.card_hashes[card]
+            card_hash |= get_card_hash(card)
 
         return card_hash
 
     def precompute(self):
-        connection = sqlite3.connect("handvalues.db")
-        cursor = connection.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS hand_values
-            (id INTEGER PRIMARY KEY, cards INTEGER, value INTEGER)
-        """)
-        self.card_hashes = {}
-        for card in STARTING_DECK:
-            suit = card.suit.value
-            rank = card.rank.value - 2
-            value = 1 << (suit * 12 + rank)
-            self.card_hashes[card] = value
+        hand_values = self.repository.select_all()
+        if hand_values:
+            print("Precomputed values loaded from db")
+            self.values = {}
+            for record in hand_values:
+                self.values[record.cards] = record.value
+
+            return
+
 
         print("Starting precomputation...")
         start_time = time.perf_counter()
 
         self.values = {}
 
-        deck = list(STARTING_DECK)
+        deck = DeckOfCards().cards
 
         count = 0
         for i, card1 in enumerate(deck):
@@ -153,9 +76,9 @@ class PokerEvaluator:
                     for l, card4 in enumerate(deck[k+1:], start=k+1):
                         for _, card5 in enumerate(deck[l+1:], start=l+1):
                             cards = [card1, card2, card3, card4, card5]
-                            value = PokerEvaluator._eval_single_player(cards, [])
-                            card_hash = self.hash_hand(cards)
-                            self.values[card_hash] = value
+                            rank, hand = PokerEvaluator._eval_hand(cards)
+                            card_hash = self.hash_hand(hand)
+                            self.values[card_hash] = rank
                             count += 1
 
                             if count % 100_000 == 0:
@@ -163,7 +86,15 @@ class PokerEvaluator:
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
-        print(f"Elapsed time: {elapsed_time:.6f} seconds")
+        print("✅ Precomputation complete")
+        print(f"⏱️  Elapsed time: {elapsed_time:.6f} seconds")
+        print("Adding to repository...")
+
+        self.repository.create_table()
+        for cards, value in self.values.items():
+            self.repository.insert(cards, value)
+
+        self.repository.commit()
 
     def get_value(self, hand: list[PlayingCard]) -> int:
         hand_hash = self.hash_hand(hand)
@@ -173,29 +104,27 @@ class PokerEvaluator:
         results = defaultdict(list)
         for i, player in enumerate(players):
             if not self.values:
-                rank, hand = PokerEvaluator._eval_single_player(player, community_cards)
+                rank, hand = PokerEvaluator._eval_hand([*player, *community_cards])
                 results[rank].append(hand)
+
             else:
                 cards = [*player, *community_cards]
                 ranks = defaultdict(list)
                 for i in range(3):
                     hand = cards[i:i+5]
                     value = self.get_value(hand)
-                    ranks[value[0]].append(hand)
+                    ranks[value].append(hand)
 
                 best_rank = max(ranks.keys())
                 results[best_rank].append(ranks[best_rank][0])
 
         best_rank = max(results.keys())
         winning_hands = results[best_rank]
-
         result = "Win" if len(winning_hands) == 1 else "Draw"
-
         #print(result, winning_hands)
 
     @staticmethod
-    def _eval_single_player(player: Player, community_cards: Cards) -> int:
-        cards: list[PlayingCard] = [*player, *community_cards]
+    def _eval_hand(cards: list[PlayingCard]) -> tuple[int, list[PlayingCard]]:
         flush_candidates = PokerEvaluator._get_flush_candidates(cards)
         straight_flush = PokerEvaluator._eval_straight(flush_candidates, need_sort=False)
 
@@ -391,7 +320,6 @@ class PokerSimulation:
             raise ValueError(f"Too many players: (max: 22, given: {self.number_of_players})")
         
     def run(self):
-
         self.deal_hands()
         self.deal_community_cards()
         self.evaluator.evaluate(self.players, self.community_cards)
@@ -420,7 +348,11 @@ class PokerSimulator:
 
     def run(self, iterations: int):
 
-        evaluator = PokerEvaluator()
+        print("Starting simulator...")
+
+        repo = PokerRepository()
+        repo.connect()
+        evaluator = PokerEvaluator(repo)
         evaluator.precompute()
 
         start_time = time.perf_counter()
@@ -434,10 +366,10 @@ class PokerSimulator:
 
         print()
         print(f"Iterations: {iterations}")
-        print(f"Elapsed time: {elapsed_time:.6f} seconds")
+        print(f"⏱️  Elapsed time: {elapsed_time:.6f} seconds")
         print(f"~{round(iterations / elapsed_time)} iterations per second")
 
 
 
 simulator = PokerSimulator(number_of_players=6)
-simulator.run(iterations=1_000_000)
+simulator.run(iterations=100_000)
