@@ -5,6 +5,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 import random
 import itertools
+import sqlite3
 
 
 BLACK_SPADE_UNICODE = "\u2660"
@@ -115,11 +116,75 @@ Cards = list[PlayingCard]
 
 @dataclass
 class PokerEvaluator:
+
+    def hash_hand(self, cards: list[PlayingCard]) -> int:
+        card_hash = 0
+        for card in cards:
+            card_hash |= self.card_hashes[card]
+
+        return card_hash
+
+    def precompute(self):
+        connection = sqlite3.connect("handvalues.db")
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hand_values
+            (id INTEGER PRIMARY KEY, cards INTEGER, value INTEGER)
+        """)
+        self.card_hashes = {}
+        for card in STARTING_DECK:
+            suit = card.suit.value
+            rank = card.rank.value - 2
+            value = 1 << (suit * 12 + rank)
+            self.card_hashes[card] = value
+
+        print("Starting precomputation...")
+        start_time = time.perf_counter()
+
+        self.values = {}
+
+        deck = list(STARTING_DECK)
+
+        count = 0
+        for i, card1 in enumerate(deck):
+            for j, card2 in enumerate(deck[i+1:], start=i+1):
+                for k, card3 in enumerate(deck[j+1:], start=j+1):
+                    for l, card4 in enumerate(deck[k+1:], start=k+1):
+                        for _, card5 in enumerate(deck[l+1:], start=l+1):
+                            cards = [card1, card2, card3, card4, card5]
+                            value = PokerEvaluator._eval_single_player(cards, [])
+                            card_hash = self.hash_hand(cards)
+                            self.values[card_hash] = value
+                            count += 1
+
+                            if count % 100_000 == 0:
+                                print(count)
+
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
+        print(f"Elapsed time: {elapsed_time:.6f} seconds")
+
+    def get_value(self, hand: list[PlayingCard]) -> int:
+        hand_hash = self.hash_hand(hand)
+        return self.values[hand_hash]
+
     def evaluate(self, players: list[Player], community_cards: Cards):
         results = defaultdict(list)
         for i, player in enumerate(players):
-            rank, hand = PokerEvaluator._eval_single_player(player, community_cards)
-            results[rank].append(hand)
+            if not self.values:
+                rank, hand = PokerEvaluator._eval_single_player(player, community_cards)
+                results[rank].append(hand)
+            else:
+                cards = [*player, *community_cards]
+                ranks = defaultdict(list)
+                for i in range(3):
+                    hand = cards[i:i+5]
+                    value = self.get_value(hand)
+                    ranks[value[0]].append(hand)
+
+                best_rank = max(ranks.keys())
+                results[best_rank].append(ranks[best_rank][0])
 
         best_rank = max(results.keys())
         winning_hands = results[best_rank]
@@ -326,6 +391,7 @@ class PokerSimulation:
             raise ValueError(f"Too many players: (max: 22, given: {self.number_of_players})")
         
     def run(self):
+
         self.deal_hands()
         self.deal_community_cards()
         self.evaluator.evaluate(self.players, self.community_cards)
@@ -353,10 +419,14 @@ class PokerSimulator:
             raise ValueError(f"Too many players: (max: 22, given: {self.number_of_players})")
 
     def run(self, iterations: int):
+
+        evaluator = PokerEvaluator()
+        evaluator.precompute()
+
         start_time = time.perf_counter()
 
         for _ in range(iterations):
-            simulation = PokerSimulation(self.number_of_players)
+            simulation = PokerSimulation(self.number_of_players, evaluator=evaluator)
             simulation.run()
 
         end_time = time.perf_counter()
@@ -370,4 +440,4 @@ class PokerSimulator:
 
 
 simulator = PokerSimulator(number_of_players=6)
-simulator.run(iterations=10000)
+simulator.run(iterations=1_000_000)
