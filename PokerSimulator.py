@@ -1,3 +1,4 @@
+from collections import defaultdict
 import time
 from typing import Self, Union
 from enum import Enum
@@ -12,7 +13,14 @@ BLACK_DIAMOND_UNICODE = "\u2666"
 BLACK_CLUB_UNICODE = "\u2663"
 
 HEX_DIGIT_BITS = 4
-HAND_RANK_HEX = 4
+
+HAND_RANK_HEX = 5
+FIRST_KICKER_HEX = 4
+SECOND_KICKER_HEX = 3
+THIRD_KICKER_HEX = 2
+FOURTH_KICKER_HEX = 1
+FIFTH_KICKER_HEX = 0
+
 
 class Suit(Enum):
     SPADE = 0
@@ -108,10 +116,17 @@ Cards = list[PlayingCard]
 @dataclass
 class PokerEvaluator:
     def evaluate(self, players: list[Player], community_cards: Cards):
-        for player in players:
-            evaluation = PokerEvaluator._eval_single_player(player, community_cards)
-            if evaluation:
-                print(hex(evaluation))
+        results = defaultdict(list)
+        for i, player in enumerate(players):
+            rank, hand = PokerEvaluator._eval_single_player(player, community_cards)
+            results[rank].append(hand)
+
+        best_rank = max(results.keys())
+        winning_hands = results[best_rank]
+
+        result = "Win" if len(winning_hands) == 1 else "Draw"
+
+        #print(result, winning_hands)
 
     @staticmethod
     def _eval_single_player(player: Player, community_cards: Cards) -> int:
@@ -119,29 +134,131 @@ class PokerEvaluator:
         flush_candidates = PokerEvaluator._get_flush_candidates(cards)
         straight_flush = PokerEvaluator._eval_straight(flush_candidates, need_sort=False)
 
+        # Royal flush
         if straight_flush and straight_flush[1].rank == Rank.KING:
-            assert len(straight_flush) == 5, "Incorrect rpyal flush"
-            return HandRank.ROYAL_FLUSH.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            assert len(straight_flush) == 5, "Incorrect royal flush"
+            hand_rank = HandRank.ROYAL_FLUSH.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, straight_flush
         
+        # Straight flush
         if straight_flush:
             assert len(straight_flush) == 5, "Incorrect straight flush"
             hand_rank = HandRank.STRAIGHT_FLUSH.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
-            hand_rank |= straight_flush[0].rank.value << (3 * HEX_DIGIT_BITS)
-            hand_rank |= straight_flush[1].rank.value << (2 * HEX_DIGIT_BITS)
-            return hand_rank
+            hand_rank |= straight_flush[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= straight_flush[1].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, straight_flush
 
         rank_groups = PokerEvaluator._get_rank_groups(cards)
 
+        # Four of a kind
         if len(rank_groups[0]) == 4:
             four_of_a_kind = rank_groups[0]
+            kicker = max(PokerEvaluator._flatten_groups(rank_groups[1:]), key=lambda x: x.rank.value)
             hand_rank = HandRank.FOUR_OF_A_KIND.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
-            print(four_of_a_kind)
+            hand_rank |= four_of_a_kind[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kicker.rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            four_of_a_kind.append(kicker)
 
-        return None
+            return hand_rank, four_of_a_kind
+
+        # Full house
+        if len(rank_groups[0]) == 3 and len(rank_groups[1]) >= 2:
+            hand_rank = HandRank.FULL_HOUSE.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= rank_groups[0][0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= rank_groups[1][0].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            full_house = [*rank_groups[0], *rank_groups[1][:2]]
+            assert len(full_house) == 5, "Incorrect full house"
+
+            return hand_rank, full_house
+        
+        # Flush
+        if flush_candidates:
+            flush = flush_candidates[:5]
+            assert len(flush) == 5, "Incorrect straight flush"
+            hand_rank = HandRank.FLUSH.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= flush[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= flush[1].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= flush[2].rank.value << (THIRD_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= flush[3].rank.value << (FOURTH_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= flush[4].rank.value << (FIFTH_KICKER_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, flush
+        
+        straight = PokerEvaluator._eval_straight(cards)
+
+        # Straight
+        if straight:
+            assert len(straight) == 5, "Incorrect straight"
+            hand_rank = HandRank.STRAIGHT.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= straight[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= straight[1].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, straight
+        
+        # Three of a kind
+        if len(rank_groups[0]) == 3:
+            three_of_a_kind = rank_groups[0]
+            kickers = sorted(PokerEvaluator._flatten_groups(rank_groups[1:]), key=lambda x: x.rank.value, reverse=True)[:2]
+            three_of_a_kind = [*three_of_a_kind, *kickers]
+            hand_rank = HandRank.THREE_OF_A_KIND.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= three_of_a_kind[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kickers[0].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kickers[1].rank.value << (THIRD_KICKER_HEX * HEX_DIGIT_BITS)
+
+            assert kickers[0].rank != kickers[1].rank, "Missed a full house"
+            
+            return hand_rank, three_of_a_kind
+        
+        # Two pair
+        if len(rank_groups[0]) == 2 and len(rank_groups[1]) == 2:
+            kicker = max(PokerEvaluator._flatten_groups(rank_groups[2:]), key=lambda x: x.rank.value)
+            two_pair = [*rank_groups[0], *rank_groups[1], kicker]
+            
+            hand_rank = HandRank.TWO_PAIR.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= rank_groups[0][0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= rank_groups[1][0].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kicker.rank.value << (THIRD_KICKER_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, two_pair
+        
+        if len(rank_groups[0]) == 2:
+            kickers = sorted(PokerEvaluator._flatten_groups(rank_groups[1:]), key=lambda x: x.rank.value, reverse=True)[:3]
+            one_pair = [*rank_groups[0], *kickers]
+
+            assert len(one_pair) == 5, "Incorrect one pair"
+
+            hand_rank = HandRank.ONE_PAIR.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+            hand_rank |= rank_groups[0][0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kickers[0].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kickers[1].rank.value << (THIRD_KICKER_HEX * HEX_DIGIT_BITS)
+            hand_rank |= kickers[2].rank.value << (FOURTH_KICKER_HEX * HEX_DIGIT_BITS)
+
+            return hand_rank, one_pair
+        
+        cards.sort(key=lambda x: x.rank.value, reverse=True)
+        cards = cards[:5]
+
+        assert len(cards) == 5, "Incorrect high card"
+
+        hand_rank = HandRank.HIGH_CARD.value << (HAND_RANK_HEX * HEX_DIGIT_BITS)
+        hand_rank |= cards[0].rank.value << (FIRST_KICKER_HEX * HEX_DIGIT_BITS)
+        hand_rank |= cards[1].rank.value << (SECOND_KICKER_HEX * HEX_DIGIT_BITS)
+        hand_rank |= cards[2].rank.value << (THIRD_KICKER_HEX * HEX_DIGIT_BITS)
+        hand_rank |= cards[3].rank.value << (FOURTH_KICKER_HEX * HEX_DIGIT_BITS)
+        hand_rank |= cards[4].rank.value << (FIFTH_KICKER_HEX * HEX_DIGIT_BITS)
+
+        return hand_rank, cards
+    
+    @staticmethod
+    def _flatten_groups(groups: list[Cards]) -> Cards:
+        return [card for group in groups for card in group]
 
     @staticmethod
     def _get_flush_candidates(cards: Cards) -> Cards:
-        groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.suit)]
+        cards = sorted(cards, key=lambda x: x.suit.value)
+        groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.suit.value)]
         for group in groups:
             if len(group) >= 5:
                 group.sort(key=lambda x: x.rank.value, reverse=True)
@@ -179,8 +296,9 @@ class PokerEvaluator:
     
     @staticmethod
     def _get_rank_groups(cards: Cards) -> list[list[PlayingCard]]:
-        groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.rank)]
-        groups.sort(key=lambda x: len(x), reverse=True)
+        cards = sorted(cards, key=lambda x: x.rank.value)
+        groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.rank.value)]
+        groups.sort(key=lambda x: (len(x), x[0].rank.value), reverse=True)
 
         return groups
 
