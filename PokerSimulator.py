@@ -1,5 +1,4 @@
 from collections import defaultdict
-from functools import lru_cache
 import time
 from typing import Union
 from enum import Enum
@@ -35,9 +34,14 @@ class HandRank(Enum):
 Player = list[PlayingCard]
 Cards = list[PlayingCard]
 
-@lru_cache
+CARD_HASHES = [[[] for _ in range(13)] for _ in range(4)]
+assert len(CARD_HASHES) == 4, "Incorrect number of suits"
+assert len(CARD_HASHES[0]) == 13, "Incorrect number of ranks"
+for card in DeckOfCards().cards:
+    CARD_HASHES[card.suit.value][card.rank.value - 2] = 1 << (card.suit.value * 12 + card.rank.value - 2)
+
 def get_card_hash(card: PlayingCard) -> int:
-    return 1 << (card.suit.value * 12 + card.rank.value - 2)
+    return CARD_HASHES[card.suit.value][card.rank.value - 2]
 
 @dataclass
 class PokerEvaluator:
@@ -82,7 +86,7 @@ class PokerEvaluator:
                             count += 1
 
                             if count % 100_000 == 0:
-                                print(count)
+                                print(f"{count:,}")
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
@@ -355,21 +359,20 @@ class PokerSimulator:
         evaluator = PokerEvaluator(repo)
         evaluator.precompute()
 
+        print("Starting iterations...")
         start_time = time.perf_counter()
 
-        for _ in range(iterations):
+        for iter_count in range(iterations):
+            if iter_count and iter_count % 10_000 == 0:
+                print(f"{iter_count:,}")
+
             simulation = PokerSimulation(self.number_of_players, evaluator=evaluator)
             simulation.run()
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
 
-        print()
-        print(f"Iterations: {iterations}")
+        print(f"Iterations complete: {iterations:,} total")
         print(f"⏱️  Elapsed time: {elapsed_time:.6f} seconds")
-        print(f"~{round(iterations / elapsed_time)} iterations per second")
+        print(f"~{round(iterations / elapsed_time):,} iterations per second")
 
-
-
-simulator = PokerSimulator(number_of_players=6)
-simulator.run(iterations=100_000)
