@@ -1,4 +1,4 @@
 from PokerSimulator import PokerSimulator
 
-simulator = PokerSimulator(number_of_players=6)
-simulator.run(iterations=1_000_000)
+simulator = PokerSimulator(number_of_players=6, use_precomputed_values=False)
+simulator.run(iterations=100_000)

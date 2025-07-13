@@ -30,31 +30,34 @@ class HandRank(Enum):
     ONE_PAIR = 1
     HIGH_CARD = 0
 
+    def display_name(self):
+        return " ".join(self.name.split("_")).title()
 
-Player = list[PlayingCard]
-Cards = list[PlayingCard]
 
-CARD_HASHES = [[[] for _ in range(13)] for _ in range(4)]
-assert len(CARD_HASHES) == 4, "Incorrect number of suits"
-assert len(CARD_HASHES[0]) == 13, "Incorrect number of ranks"
-for card in DeckOfCards().cards:
-    CARD_HASHES[card.suit.value][card.rank.value - 2] = 1 << (card.suit.value * 12 + card.rank.value - 2)
+@dataclass
+class PokerGameResult:
+    hand_value: int
+    winning_hands: list[list[PlayingCard]]
+    winning_hole_cards: list[list[PlayingCard]]
 
-def get_card_hash(card: PlayingCard) -> int:
-    return CARD_HASHES[card.suit.value][card.rank.value - 2]
+    def is_draw(self):
+        return len(self.winning_hands) > 1
+    
+    def get_hand_rank(self) -> HandRank:
+        rank = self.hand_value >> (HAND_RANK_HEX * HEX_DIGIT_BITS)
+        return HandRank(rank)
 
 @dataclass
 class PokerEvaluator:
     repository: PokerRepository
+    use_precomputed_values: bool = True
 
-    def hash_hand(self, cards: list[PlayingCard]) -> int:
-        card_hash = 0
-        for card in cards:
-            card_hash |= get_card_hash(card)
-
-        return card_hash
+    def __post_init__(self):
+        self.values = {}
 
     def precompute(self):
+        if not self.use_precomputed_values:
+            return
 
         hand_values = self.repository.select_all()
         if hand_values:
@@ -65,28 +68,19 @@ class PokerEvaluator:
 
             return
 
-
         print("Starting precomputation...")
         start_time = time.perf_counter()
 
-        self.values = {}
-
         deck = DeckOfCards().cards
+        five_card_hands = itertools.combinations(deck, 5)
 
-        count = 0
-        for i, card1 in enumerate(deck):
-            for j, card2 in enumerate(deck[i+1:], start=i+1):
-                for k, card3 in enumerate(deck[j+1:], start=j+1):
-                    for l, card4 in enumerate(deck[k+1:], start=k+1):
-                        for _, card5 in enumerate(deck[l+1:], start=l+1):
-                            cards = [card1, card2, card3, card4, card5]
-                            rank, hand = PokerEvaluator._eval_hand(cards)
-                            card_hash = self.hash_hand(hand)
-                            self.values[card_hash] = rank
-                            count += 1
+        for hand in five_card_hands:
+            rank, hand = PokerEvaluator._eval_hand(list(hand))
+            card_hash = DeckOfCards.hash_cards(hand)
+            self.values[card_hash] = rank
 
-                            if count % 100_000 == 0:
-                                print(f"{count:,}")
+            if len(self.values) % 100_000 == 0:
+                print(f"{len(self.values):,}")
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
@@ -101,31 +95,36 @@ class PokerEvaluator:
         self.repository.commit()
 
     def get_value(self, hand: list[PlayingCard]) -> int:
-        hand_hash = self.hash_hand(hand)
+        hand_hash = DeckOfCards.hash_cards(hand)
         return self.values[hand_hash]
 
-    def evaluate(self, players: list[Player], community_cards: Cards):
+    def evaluate(self, players: list[list[PlayingCard]], community_cards: list[PlayingCard]) -> PokerGameResult:
         results = defaultdict(list)
-        for i, player in enumerate(players):
+        for index, player in enumerate(players):
             if not self.values:
                 rank, hand = PokerEvaluator._eval_hand([*player, *community_cards])
-                results[rank].append(hand)
+                results[rank].append((index, hand))
 
             else:
                 cards = [*player, *community_cards]
                 ranks = defaultdict(list)
-                for i in range(3):
-                    hand = cards[i:i+5]
+                for hand in itertools.combinations(cards, 5):
+                    hand = list(hand)
                     value = self.get_value(hand)
-                    ranks[value].append(hand)
+                    ranks[value].append((index, hand))
 
                 best_rank = max(ranks.keys())
                 results[best_rank].append(ranks[best_rank][0])
 
         best_rank = max(results.keys())
-        winning_hands = results[best_rank]
-        result = "Win" if len(winning_hands) == 1 else "Draw"
-        #print(result, winning_hands)
+        winning_hands = [result[1] for result in results[best_rank]]
+        winning_indexes = [result[0] for result in results[best_rank]]
+        winning_hole_cards = [players[index] for index in winning_indexes]
+
+        assert len(winning_hands) == len(winning_hole_cards), "Lists are not the same length"
+
+        return PokerGameResult(best_rank, winning_hands, winning_hole_cards)
+        
 
     @staticmethod
     def _eval_hand(cards: list[PlayingCard]) -> tuple[int, list[PlayingCard]]:
@@ -250,11 +249,11 @@ class PokerEvaluator:
         return hand_rank, cards
     
     @staticmethod
-    def _flatten_groups(groups: list[Cards]) -> Cards:
+    def _flatten_groups(groups: list[list[PlayingCard]]) -> list[PlayingCard]:
         return [card for group in groups for card in group]
 
     @staticmethod
-    def _get_flush_candidates(cards: Cards) -> Cards:
+    def _get_flush_candidates(cards: list[PlayingCard]) -> list[PlayingCard]:
         cards = sorted(cards, key=lambda x: x.suit.value)
         groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.suit.value)]
         for group in groups:
@@ -265,7 +264,7 @@ class PokerEvaluator:
         return []
     
     @staticmethod
-    def _eval_straight(cards: Cards, need_sort: bool = True) -> Cards:
+    def _eval_straight(cards: list[PlayingCard], need_sort: bool = True) -> list[PlayingCard]:
         if not cards: 
             return cards
         
@@ -293,7 +292,7 @@ class PokerEvaluator:
         return []
     
     @staticmethod
-    def _get_rank_groups(cards: Cards) -> list[list[PlayingCard]]:
+    def _get_rank_groups(cards: list[PlayingCard]) -> list[list[PlayingCard]]:
         cards = sorted(cards, key=lambda x: x.rank.value)
         groups = [list(group) for _, group in itertools.groupby(cards, key=lambda x: x.rank.value)]
         groups.sort(key=lambda x: (len(x), x[0].rank.value), reverse=True)
@@ -301,7 +300,7 @@ class PokerEvaluator:
         return groups
 
     @staticmethod
-    def _find_rank(cards: Cards, rank: Rank) -> Union[PlayingCard, None]:
+    def _find_rank(cards: list[PlayingCard], rank: Rank) -> Union[PlayingCard, None]:
         for card in cards:
             if card.rank == rank:
                 return card
@@ -316,17 +315,18 @@ class PokerSimulation:
     deck: DeckOfCards = field(default_factory=lambda: DeckOfCards().shuffle())
     evaluator: PokerEvaluator = field(default_factory=PokerEvaluator)
 
-    players: list[Player] = field(default_factory=list)
-    community_cards: Cards = field(default_factory=list)
+    players: list[list[PlayingCard]] = field(default_factory=list)
+    community_cards: list[PlayingCard] = field(default_factory=list)
 
     def __post_init__(self):
         if self.number_of_players > 22:
             raise ValueError(f"Too many players: (max: 22, given: {self.number_of_players})")
         
-    def run(self):
+    def run(self) -> PokerGameResult:
         self.deal_hands()
         self.deal_community_cards()
-        self.evaluator.evaluate(self.players, self.community_cards)
+        result = self.evaluator.evaluate(self.players, self.community_cards)
+        return result
 
     def deal_hands(self):
         self.players = [[] for _ in range(self.number_of_players)]
@@ -345,6 +345,7 @@ class PokerSimulation:
 @dataclass
 class PokerSimulator:
     number_of_players: int
+    use_precomputed_values: bool = True
 
     def __post_init__(self):
         if self.number_of_players > 22:
@@ -356,23 +357,54 @@ class PokerSimulator:
 
         repo = PokerRepository()
         repo.connect()
-        evaluator = PokerEvaluator(repo)
+        evaluator = PokerEvaluator(repo, use_precomputed_values=self.use_precomputed_values)
         evaluator.precompute()
 
         print("Starting iterations...")
         start_time = time.perf_counter()
+
+        draw_count = win_count = 0
+        ranks = defaultdict(int)
+        opening_hands = defaultdict(int)
 
         for iter_count in range(iterations):
             if iter_count and iter_count % 10_000 == 0:
                 print(f"{iter_count:,}")
 
             simulation = PokerSimulation(self.number_of_players, evaluator=evaluator)
-            simulation.run()
+            result = simulation.run()
+            if result.is_draw():
+                draw_count += 1
+            else:
+                win_count += 1
+                card_hash = DeckOfCards.hash_cards(result.winning_hole_cards[0])
+                opening_hands[card_hash] += 1
+
+            hand_rank = result.get_hand_rank()
+            ranks[hand_rank] += 1
+
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
 
-        print(f"Iterations complete: {iterations:,} total")
-        print(f"⏱️  Elapsed time: {elapsed_time:.6f} seconds")
+        print()
+        print(f"Iterations completed: {iterations:,}")
+        print(f"⏱️  Elapsed time: {elapsed_time:.2f} seconds")
         print(f"~{round(iterations / elapsed_time):,} iterations per second")
+        print()
+
+        if win_count:
+            print(f"Wins: {win_count:,}")
+        if draw_count:
+            print(f"Draws: {draw_count:,}")
+
+        print()
+        for rank in sorted(ranks.items(), key=lambda x: x[0].value, reverse=True):
+            print(f"{rank[0].display_name()}: {rank[1]:,}")
+
+        best_starting_hands = sorted(opening_hands.items(), key=lambda x: x[1], reverse=True)
+        for hand, val in best_starting_hands[:5]:
+            print(DeckOfCards.unhash_cards(hand), ": ", val)
+
+
 

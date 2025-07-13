@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
+import functools
+import operator
 import random
 from typing import Self
 
@@ -62,9 +64,15 @@ class PlayingCard:
     def __repr__(self):
         return f"{Rank.to_string(self.rank)}{Suit.to_unicode(self.suit)}"
     
+    @functools.cached_property
+    def value(self):
+        return 1 << (self.suit.value * 12 + self.rank.value - 2)
+    
+    
 
 STARTING_DECK = frozenset(PlayingCard(rank, suit) for rank in Rank for suit in Suit)
 assert len(STARTING_DECK) == 52, "Incorrect starting deck"
+CARDS_BY_VALUE = {card.value: card for card in STARTING_DECK}
 
 
 @dataclass
@@ -83,3 +91,25 @@ class DeckOfCards:
             raise ValueError("Can't draw from an empty deck")
         
         return self.cards.pop()
+    
+    @staticmethod
+    def get_card(value: int) -> PlayingCard:
+        card = CARDS_BY_VALUE.get(value)
+        if not card:
+            raise ValueError("Card not found: " + str(value))
+        
+        return card
+    
+    @staticmethod
+    def hash_cards(cards: list[PlayingCard]) -> int:
+        return functools.reduce(operator.__or__, [card.value for card in cards])
+    
+    @staticmethod
+    def unhash_cards(value: int) -> list[PlayingCard]:
+        cards = []
+        while value > 0:
+            card = value & -value
+            cards.append(DeckOfCards.get_card(card))
+            value -= card
+
+        return cards
