@@ -1,6 +1,5 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from enum import Enum
 import itertools
 import time
 from typing import Union
@@ -10,25 +9,6 @@ from Poker import PokerGameResult
 from PokerRepository import PokerRepository
 from Poker import HandRank
     
-class HandClassification:
-
-    def __init__(self, cards: list[PlayingCard]):
-        assert len(cards) == 2, "Incorrect number of cards in starting hand"
-        cards.sort(key=lambda x: x.rank.value, reverse=True)
-
-        self.ranks = [card.rank for card in cards]
-        self.suited = cards[0].suit.value == cards[1].suit.value
-        self.pair = cards[0].rank.value == cards[1].rank.value
-
-    def get_suited_or_pair(self) -> str:
-        if self.pair:
-            return ""
-        
-        return "s" if self.suited else "o"
-
-    def __repr__(self) -> str:
-        return f"{self.ranks[0].serialize()}{self.ranks[1].serialize()}{self.get_suited_or_pair()}"
-
 
 @dataclass
 class PokerEvaluator:

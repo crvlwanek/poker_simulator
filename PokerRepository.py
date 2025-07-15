@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import sqlite3
 
-from Poker import PokerGameResult
+from Poker import PokerGameResult, SerializedResult
 
 DB_NAME = "poker_repo.db"
 HAND_VALUES_TABLE = "hand_values"
@@ -83,10 +83,8 @@ class PokerRepository:
         except:
             return []
         
-    def select_all_results(self):
-        try:
-            self._cursor.execute(SELECT_ALL_RESULTS_QUERY)
-            return self._cursor.fetchall()
-        except:
-            return []
+    def select_all_results(self) -> list[PokerGameResult]:
+        self._cursor.execute(SELECT_ALL_RESULTS_QUERY)
+        results_serialized: list[SerializedResult] = self._cursor.fetchall()
+        return PokerGameResult.deserialize_all(results_serialized)
 

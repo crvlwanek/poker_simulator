@@ -20,8 +20,7 @@ class Suit(Enum):
 
     __serialized = ["s", "h", "d", "c"]
 
-    @staticmethod
-    def to_unicode(suit: Self) -> str:
+    def to_unicode(suit) -> str:
         match (suit):
             case Suit.SPADE:
                 return BLACK_SPADE_UNICODE
@@ -36,6 +35,14 @@ class Suit(Enum):
     
     def serialize(self) -> str:
         return Suit.__serialized[self.value]
+    
+    @staticmethod
+    def deserialize(value: str) -> Self:
+        index = Suit.__serialized.index(value)
+        if index == -1:
+            raise ValueError(f"Could not deserialize value: {value}")
+        
+        return Suit(index)
 
 class Rank(Enum):
     TWO = 2
@@ -62,6 +69,14 @@ class Rank(Enum):
     
     def serialize(self) -> str:
         return Rank.__serialized[self.value - 2]
+    
+    @staticmethod
+    def deserialize(value: str) -> Self:
+        index = Rank.__serialized.index(value)
+        if index == -1:
+            raise ValueError(f"Could not deserialize value: {value}")
+        
+        return Rank(index + 2)
 
 
 @dataclass(frozen=True)
@@ -69,15 +84,20 @@ class PlayingCard:
     rank: Rank
     suit: Suit
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.rank.to_string()}{self.suit.to_unicode()}"
     
     @functools.cached_property
-    def value(self):
+    def value(self) -> int:
         return 1 << (self.suit.value * 12 + self.rank.value - 2)
     
-    def serialize(self):
+    def serialize(self) -> str:
         return f"{self.rank.serialize()}{self.suit.serialize()}"
+    
+    @staticmethod
+    def deserialize(value: str) -> Self:
+        assert len(value) == 2, f"String cannot be deserialized: {value}"
+        return PlayingCard(Rank.deserialize(value[0]), Suit.deserialize(value[1]))
     
     
 

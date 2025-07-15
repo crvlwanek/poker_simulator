@@ -2,7 +2,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from PokerEvaluator import HandClassification, PokerEvaluator, PokerGameResult
+from Poker import HandClassification
+from PokerEvaluator import PokerEvaluator, PokerGameResult
 from PokerRepository import PokerRepository
 from DeckOfCards import DeckOfCards, PlayingCard
 
