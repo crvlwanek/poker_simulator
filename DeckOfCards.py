@@ -97,13 +97,13 @@ class PlayingCard:
     @staticmethod
     def deserialize(value: str) -> Self:
         assert len(value) == 2, f"String cannot be deserialized: {value}"
-        return PlayingCard(Rank.deserialize(value[0]), Suit.deserialize(value[1]))
-    
+        return CARDS_BY_SERIALIZATION[value] 
     
 
 STARTING_DECK = frozenset(PlayingCard(rank, suit) for rank in Rank for suit in Suit)
 assert len(STARTING_DECK) == 52, "Incorrect starting deck"
 CARDS_BY_VALUE = {card.value: card for card in STARTING_DECK}
+CARDS_BY_SERIALIZATION = {card.serialize(): card for card in STARTING_DECK}
 
 
 @dataclass
