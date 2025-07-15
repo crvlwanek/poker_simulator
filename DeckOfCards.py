@@ -18,8 +18,10 @@ class Suit(Enum):
     DIAMOND = 2
     CLUB = 3
 
+    __serialized = ["s", "h", "d", "c"]
+
     @staticmethod
-    def to_unicode(suit: Enum) -> str:
+    def to_unicode(suit: Self) -> str:
         match (suit):
             case Suit.SPADE:
                 return BLACK_SPADE_UNICODE
@@ -31,7 +33,9 @@ class Suit(Enum):
                 return BLACK_CLUB_UNICODE
         
         raise TypeError("Unknown suit: " + suit)
-
+    
+    def serialize(self) -> str:
+        return Suit.__serialized[self.value]
 
 class Rank(Enum):
     TWO = 2
@@ -49,12 +53,16 @@ class Rank(Enum):
     ACE = 14
 
     __mappings = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+    __serialized = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
     assert len(__mappings) == 13, "Incorrect mappings"
+    assert len(__serialized) == 13, "Incorrect mappings"
 
-    @staticmethod
-    def to_string(rank: Enum) -> str:
-        return Rank.__mappings[rank.value - 2]
+    def to_string(self) -> str:
+        return Rank.__mappings[self.value - 2]
     
+    def serialize(self) -> str:
+        return Rank.__serialized[self.value - 2]
+
 
 @dataclass(frozen=True)
 class PlayingCard:
@@ -67,6 +75,9 @@ class PlayingCard:
     @functools.cached_property
     def value(self):
         return 1 << (self.suit.value * 12 + self.rank.value - 2)
+    
+    def serialize(self):
+        return f"{self.rank.serialize()}{self.suit.serialize()}"
     
     
 

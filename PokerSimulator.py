@@ -30,8 +30,28 @@ class HandRank(Enum):
     ONE_PAIR = 1
     HIGH_CARD = 0
 
-    def display_name(self):
+    def __str__(self):
         return " ".join(self.name.split("_")).title()
+    
+class HandClassification:
+
+    def __init__(self, cards: list[PlayingCard]):
+        assert len(cards) == 2, "Incorrect number of cards in starting hand"
+        cards.sort(key=lambda x: x.rank.value, reverse=True)
+
+        self.ranks = [card.rank for card in cards]
+        self.suited = cards[0].suit.value == cards[1].suit.value
+        self.pair = cards[0].rank.value == cards[1].rank.value
+
+    def get_suited_or_pair(self) -> str:
+        if self.pair:
+            return ""
+        
+        return "s" if self.suited else "o"
+
+    def __repr__(self) -> str:
+        return f"{Rank.serialize(self.ranks[0])}{Rank.serialize(self.ranks[1])}{self.get_suited_or_pair()}"
+
 
 
 @dataclass
@@ -88,7 +108,7 @@ class PokerEvaluator:
         print(f"⏱️  Elapsed time: {elapsed_time:.6f} seconds")
         print("Adding to repository...")
 
-        self.repository.create_table()
+        self.repository.create_tables()
         for cards, value in self.values.items():
             self.repository.insert(cards, value)
 
@@ -365,7 +385,8 @@ class PokerSimulator:
 
         draw_count = win_count = 0
         ranks = defaultdict(int)
-        opening_hands = defaultdict(int)
+        winning_opening_hands = defaultdict(int)
+        all_opening_hands = defaultdict(int)
 
         for iter_count in range(iterations):
             if iter_count and iter_count % 10_000 == 0:
@@ -373,12 +394,16 @@ class PokerSimulator:
 
             simulation = PokerSimulation(self.number_of_players, evaluator=evaluator)
             result = simulation.run()
+            for player in simulation.players:
+                classification = HandClassification(player)
+                all_opening_hands[repr(classification)] += 1
+
             if result.is_draw():
                 draw_count += 1
             else:
                 win_count += 1
-                card_hash = DeckOfCards.hash_cards(result.winning_hole_cards[0])
-                opening_hands[card_hash] += 1
+                classification = HandClassification(result.winning_hole_cards[0])
+                winning_opening_hands[repr(classification)] += 1
 
             hand_rank = result.get_hand_rank()
             ranks[hand_rank] += 1
@@ -400,11 +425,12 @@ class PokerSimulator:
 
         print()
         for rank in sorted(ranks.items(), key=lambda x: x[0].value, reverse=True):
-            print(f"{rank[0].display_name()}: {rank[1]:,}")
+            print(f"{rank[0]}: {rank[1]:,}")
 
-        best_starting_hands = sorted(opening_hands.items(), key=lambda x: x[1], reverse=True)
-        for hand, val in best_starting_hands[:5]:
-            print(DeckOfCards.unhash_cards(hand), ": ", val)
+        print()
+        best_starting_hands = {key: winning_opening_hands[key] / num_times_drawn for key, num_times_drawn in all_opening_hands.items()}
+        for hand, value in sorted(best_starting_hands.items(), key=lambda x: x[1], reverse=True)[:10]:
+            print(f"{hand}: {value * 100:.2f}%")
 
 
 
