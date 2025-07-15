@@ -70,7 +70,7 @@ class PlayingCard:
     suit: Suit
 
     def __repr__(self):
-        return f"{Rank.to_string(self.rank)}{Suit.to_unicode(self.suit)}"
+        return f"{self.rank.to_string()}{self.suit.to_unicode()}"
     
     @functools.cached_property
     def value(self):

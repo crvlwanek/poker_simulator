@@ -1,2 +1,5 @@
+.venv
 __pycache__
-poker_repo.db
+.ipynb_checkpoints
+
+poker_repo.db*
