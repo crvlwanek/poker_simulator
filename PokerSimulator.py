@@ -60,7 +60,7 @@ class PokerSimulator:
         evaluator = PokerEvaluator(repo, use_precomputed_values=self.use_precomputed_values)
         evaluator.precompute()
 
-        print("Starting iterations...")
+        print(f"Starting {iterations:,} iterations...")
         start_time = time.perf_counter()
 
         draw_count = win_count = 0
@@ -95,11 +95,6 @@ class PokerSimulator:
         elapsed_time = end_time - start_time
 
         print()
-        print(f"Iterations completed: {iterations:,}")
-        print(f"⏱️  Elapsed time: {elapsed_time:.2f} seconds")
-        print(f"~{round(iterations / elapsed_time):,} iterations per second")
-        print()
-
         if win_count:
             print(f"Wins: {win_count:,}")
         if draw_count:
@@ -113,6 +108,11 @@ class PokerSimulator:
         best_starting_hands = {key: winning_opening_hands[key] / num_times_drawn for key, num_times_drawn in all_opening_hands.items()}
         for hand, value in sorted(best_starting_hands.items(), key=lambda x: x[1], reverse=True)[:10]:
             print(f"{hand}: {value * 100:.2f}%")
+
+        print(f"Iterations completed: {iterations:,}")
+        print(f"⏱️  Elapsed time: {elapsed_time:.2f} seconds")
+        print(f"~{round(iterations / elapsed_time):,} iterations per second")
+        print()
 
 
 
